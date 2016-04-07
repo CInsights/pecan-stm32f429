@@ -9,6 +9,7 @@
 #include "si4464.h"
 #include "modules.h"
 #include "debug.h"
+#include <string.h>
 
 static const SPIConfig ls_spicfg1 = {
 	NULL,
@@ -25,13 +26,19 @@ static const SPIConfig ls_spicfg2 = {
 #define getSPIDriver(radio) (radio == RADIO_2M ? &ls_spicfg1 : &ls_spicfg2)
 
 uint32_t outdiv;
+uint32_t band;
+uint16_t packet_size;
 
 /**
  * Initializes Si4464 transceiver chip. Adjustes the frequency which is shifted by variable
  * oscillator voltage.
- * @param mv Oscillator voltage in mv
+ * @param radio Radio
+ * @param modulation Modulation type
+ * @param size Packet size in bytes (only required for MOD_2GFSK)
  */
-void Si4464_Init(radio_t radio, mod_t modulation) {
+void Si4464_Init(radio_t radio, mod_t modulation, uint16_t size) {
+	packet_size = size;
+
 	// Initialize SPI
 	palSetPadMode(PORT(SPI_SCK), PIN(SPI_SCK), PAL_MODE_ALTERNATE(5) | PAL_STM32_OSPEED_HIGHEST);			// SCK
 	palSetPadMode(PORT(SPI_MISO), PIN(SPI_MISO), PAL_MODE_ALTERNATE(5) | PAL_STM32_OSPEED_HIGHEST);			// MISO
@@ -176,7 +183,6 @@ void Si4464_read(radio_t radio, uint8_t* txData, uint32_t txlen, uint8_t* rxData
 
 void setFrequency(radio_t radio, uint32_t freq, uint16_t shift) {
 	// Set the output divider according to recommended ranges given in Si4464 datasheet
-	uint32_t band = 0;
 	if(freq < 705000000UL) {outdiv = 6;  band = 1;};
 	if(freq < 525000000UL) {outdiv = 8;  band = 2;};
 	if(freq < 353000000UL) {outdiv = 12; band = 3;};
@@ -286,6 +292,14 @@ void setModem2GFSK(radio_t radio) {
 	uint8_t no_sync_word[] = {0x11, 0x11, 0x01, 0x11, (0x01 << 7)};
 	Si4464_write(radio, no_sync_word, 5);
 
+	// Bit order LSB first
+	uint8_t lsb_first[] = {0x11, 0x12, 0x01, 0x06, 0x01};
+	Si4464_write(radio, lsb_first, 5);
+
+	// Packet size
+	uint8_t pkt_length[] = {0x11, 0x12, 0x02, 0x0d, (packet_size >> 8) & 0xFF, packet_size & 0xFF};
+	Si4464_write(radio, pkt_length, 6);
+
 	// Setup the NCO modulo and oversampling mode
 	uint32_t s = OSC_FREQ / 40;
 	uint8_t f3 = (s >> 24) & 0xFF;
@@ -299,8 +313,8 @@ void setModem2GFSK(radio_t radio) {
 	uint8_t setup_data_rate[] = {0x11, 0x20, 0x03, 0x03, 0x01, 0x25, 0x80};
 	Si4464_write(radio, setup_data_rate, 7);
 
-	// use 2GFSK from async GPIO0
-	uint8_t use_2gfsk[] = {0x11, 0x20, 0x01, 0x00, 0x0B};
+	// use 2GFSK from packet handler
+	uint8_t use_2gfsk[] = {0x11, 0x20, 0x01, 0x00, 0x03};
 	Si4464_write(radio, use_2gfsk, 5);
 }
 
@@ -311,8 +325,11 @@ void setPowerLevel(radio_t radio, int8_t level) {
 }
 
 void startTx(radio_t radio) {
-	uint8_t change_state_command[] = {0x34, 0x07};
-	Si4464_write(radio, change_state_command, 2);
+	//uint8_t change_state_command[] = {0x34, 0x07};
+	//Si4464_write(radio, change_state_command, 2);
+
+	uint8_t start_tx[] = {0x31, band, 0x30, (packet_size >> 8) & 0xFF, packet_size & 0xFF};
+	Si4464_write(radio, start_tx, 2);
 }
 
 void stopTx(radio_t radio) {
@@ -383,5 +400,24 @@ uint8_t dBm2powerLvl(int32_t dBm) {
 	} else {
 		return 127;
 	}
+}
+
+void Si4464_resetFIFO(radio_t radio) {
+	uint8_t reset_fifo[] = {0x15, 0x01};
+	Si4464_write(radio, reset_fifo, 2);
+}
+
+uint8_t Si4464_getFIFOFreeCount(radio_t radio) {
+	uint8_t txData[2] = {0x15, 0x00};
+	uint8_t rxData[4];
+	Si4464_read(radio, txData, 2, rxData, 4);
+	return rxData[3];
+}
+
+void Si4464_writeFIFO(radio_t radio, uint8_t *data, uint8_t size) {
+	uint8_t fifo[size+1];
+	fifo[0] = 0x66;
+	memcpy(&fifo[1], data, size);
+	Si4464_write(radio, fifo, size+1);
 }
 

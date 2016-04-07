@@ -26,7 +26,7 @@ typedef enum { // Modulation type
 	MOD_AFSK
 } mod_t;
 
-void Si4464_Init(radio_t radio, mod_t modulation);
+void Si4464_Init(radio_t radio, mod_t modulation, uint16_t size);
 void Si4464_write(radio_t radio, uint8_t* txData, uint32_t len);
 void setFrequency(radio_t radio, uint32_t freq, uint16_t shift);
 void setShift(radio_t radio, uint16_t shift);
@@ -42,6 +42,9 @@ void radioShutdown(radio_t radio);
 bool radioTune(radio_t radio, uint32_t frequency, uint16_t shift, int8_t level);
 int8_t Si4464_getTemperature(radio_t radio);
 uint8_t dBm2powerLvl(int32_t dBm);
+void Si4464_resetFIFO(radio_t radio);
+uint8_t Si4464_getFIFOFreeCount(radio_t radio);
+void Si4464_writeFIFO(radio_t radio, uint8_t *data, uint8_t size);
 
 #endif
 

@@ -32,7 +32,7 @@ void sendAFSK(radio_t radio, radioMSG_t *msg) {
 	uint8_t current_byte = 0;
 
 	// Initialize radio and tune
-	Si4464_Init(radio, MOD_AFSK);
+	Si4464_Init(radio, MOD_AFSK, 0);
 	radioTune(radio, msg->freq, 0, msg->power);
 
 	// Modulate
@@ -70,7 +70,7 @@ void sendAFSK(radio_t radio, radioMSG_t *msg) {
   */
 void sendCW(radio_t radio, radioMSG_t *msg) {
 	// Initialize radio and tune
-	Si4464_Init(radio, MOD_CW);
+	Si4464_Init(radio, MOD_CW, 0);
 	radioTune(radio, msg->freq, 0, msg->power);
 
 	// Transmit data
@@ -156,7 +156,7 @@ void send2FSK(radio_t radio, radioMSG_t *msg) {
 	fsk_radio = radio;
 
 	// Initialize radio and tune
-	Si4464_Init(radio, MOD_2FSK);
+	Si4464_Init(radio, MOD_2FSK, 0);
 	MOD_GPIO_SET(radio, HIGH);
 	radioTune(radio, msg->freq, FSK_SHIFT, msg->power);
 
@@ -167,12 +167,47 @@ void send2FSK(radio_t radio, radioMSG_t *msg) {
 }
 
 void send2GFSK(radio_t radio, radioMSG_t *msg) {
-	// Initialize radio and tune
-	Si4464_Init(radio, MOD_2GFSK);
+	uint16_t size = (msg->bin_len+7)/8;
+
+	// Initialize
+	Si4464_Init(radio, MOD_2GFSK, size);
+
+	// Initialize FIFO
+	Si4464_resetFIFO(radio);
+	Si4464_writeFIFO(radio, msg->msg, 64);
+
+	// Tune
 	radioTune(radio, msg->freq, 0, msg->power);
 
+	// Feed FIFO
+	uint16_t pos = 64;
+	while(true)
+	{
+		uint8_t fifoFree = Si4464_getFIFOFreeCount(radio);
+		//TRACE_DEBUG("FREE > %d", fifoFree);
+		uint16_t left = size-pos-1;
+
+		if(left > fifoFree) { // More data available than can be written into FIFO
+
+			Si4464_writeFIFO(radio, &msg->msg[pos], fifoFree);
+			pos += fifoFree;
+
+		} else { // All remaining bytes can be written into FIFO
+
+			Si4464_writeFIFO(radio, &msg->msg[pos], left); // Write remaining bytes
+
+			// Wait until all bytes have been transmitted
+			while(Si4464_getFIFOFreeCount(radio));
+				chThdSleepMilliseconds(1);
+
+			return; // Transmission done
+		}
+
+		//chThdSleepMilliseconds(1);
+	}
+
 	// Transmit data
-	uint32_t sample_per_bit = 0;
+	/*uint32_t sample_per_bit = 0;
 	uint32_t bit = 0;
 	uint8_t ctone = 0;
 	uint8_t current_byte = 0;
@@ -196,7 +231,7 @@ void send2GFSK(radio_t radio, radioMSG_t *msg) {
 		}
 
 		//time = chThdSleepUntilWindowed(time, time + 27);
-	}
+	}*/
 }
 
 THD_FUNCTION(moduleRADIO, arg) {
